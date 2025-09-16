@@ -1,233 +1,232 @@
 
 """
-Live Algorand Pool Transaction Monitoring using AlgoKit Subscriber
-
-This script demonstrates how to monitor pool transactions on Algorand DEXs like 
-Tinyman, Pact, and AlgoFi using the AlgoKit Subscriber library.
+Enhanced DEX Transaction Monitor for Algorand
+Monitors Tinyman and Pact transactions using multiple filter strategies
 """
 
-from algokit_subscriber import AlgorandSubscriber
+from algokit_subscriber import AlgorandSubscriber, SubscribedTransaction
 from algosdk.v2client import algod, indexer
-import json
 import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Setup logging  
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class AlgorandPoolMonitor:
-    def __init__(self, algod_client, indexer_client=None):
-        self.algod = algod_client
-        self.indexer = indexer_client
-        self.watermark = 0
+# Create Algorand client (MainNet)
+algorand = algod.AlgodClient("", "https://mainnet-api.algonode.cloud")
+indexer_client = indexer.IndexerClient("", "https://mainnet-idx.algonode.cloud")
 
-        # Major DEX App IDs (MainNet)
-        self.dex_app_ids = {
-            'tinyman_v2': 1002541853,  # Tinyman V2
-            'pact': 463363983,         # Pact.fi (example)
-            'algofi': 605753404,       # AlgoFi (example)
-        }
+# Watermark for tracking progress
+watermark = 0
+def get_watermark() -> int:
+    return watermark
 
-        # Common pool-related assets
-        self.major_assets = {
-            'USDC': 31566704,
-            'USDT': 312769,
-            'ALGO': 0,  # Native ALGO
-        }
+def set_watermark(new_watermark: int) -> None:
+    global watermark  
+    watermark = new_watermark
+    if new_watermark % 100 == 0:
+        logger.info(f"📍 Processed through round {new_watermark}")
 
-    def create_pool_filters(self):
-        """Create filters for pool transactions"""
-        filters = [
-            # Swap-in of ASA (asset transfer)
+# Enhanced DEX monitoring with multiple filter strategies
+subscriber = AlgorandSubscriber(
+    algod_client=algorand,
+    indexer_client=indexer_client,  # Add indexer for better performance
+    config={
+        "filters": [
+            # Strategy 2: Application call filtering (most effective)
             {
-                'name': 'swap_in',
-                'filter': {
-                    'type': 'axfer',
-                    'min_amount': 1000,
-                    'asset_id': list(self.major_assets.values())
+                "name": "tinyman_app_calls",
+                "filter": {
+                    "type": "appl",
+                    "app_id": [
+                        1002541853,  # Tinyman V2 main contract
+                        350338509,   # Tinyman V1.1 (legacy)
+                    ]
                 }
             },
-            # ALGO-for-ASA swap (payment)
             {
-                'name': 'algo_swap',
-                'filter': {
-                    'type': 'pay',
-                    'min_amount': 1_000_000    # 1 ALGO
+                "name": "pact_app_calls",
+                "filter": {
+                    "type": "appl", 
+                    "app_id": [
+                        # Note: Pact uses multiple app IDs for different pools
+                        # You'll need to research current Pact app IDs
+                        # These are examples - check Pact documentation
+                    ]
                 }
             },
-            # DEX application calls
-            *[
-                {
-                    'name': f'{dex}_interaction',
-                    'filter': {
-                        'type': 'appl',
-                        'app_id': app_id,
-                        'app_on_complete': ['noop', 'optin']
-                    }
+
+            # Strategy 3: Asset transfer filtering for major trading pairs
+            {
+                "name": "major_asset_transfers",
+                "filter": {
+                    "type": "axfer",
+                    "asset_id": [
+                        31566704,   # USDC
+                        312769,     # USDT  
+                        386192725,  # goBTC
+                        386195940,  # goETH
+                    ],
+                    "min_amount": 1000000  # Filter for significant amounts
                 }
-                for dex, app_id in self.dex_app_ids.items()
-            ],
-            # Note-based pool operations
-            {
-                'name': 'tinyman_operation',
-                'filter': { 'note_prefix': 'tinyman' }
             },
+
+            # Strategy 4: Large ALGO transfers (potential swaps)
             {
-                'name': 'pact_operation',
-                'filter': { 'note_prefix': 'pact' }
-            },
-            # Pool-token transfers
-            {
-                'name': 'pool_token_transfer',
-                'filter': {
-                    'type': 'axfer',
-                    'min_amount': 1
+                "name": "algo_transfers",
+                "filter": {
+                    "type": "pay", 
+                    "min_amount": 10000000  # 10+ ALGO
                 }
+            },
+
+            # Strategy 5: Catch-all for any transaction
+            {
+                "name": "all_transactions",
+                "filter": {}  # Empty filter to catch all transactions
             }
-        ]
-        return filters
+        ],
+        "wait_for_block_when_at_tip": True,
+        "sync_behaviour": "skip-sync-newest",  # Start from current tip
+        "max_rounds_to_sync": 50,
+        "watermark_persistence": {
+            "get": get_watermark,
+            "set": set_watermark
+        },
+    },
+)
 
-    def setup_subscriber(self):
-        """Setup the AlgorandSubscriber with pool monitoring filters"""
+# Enhanced handlers with better analysis
+def handle_tinyman_note(txn: SubscribedTransaction, _: str) -> None:
+    note = txn.get('note', b'')
+    if isinstance(note, bytes):
+        note = note.decode('utf-8', errors='replace')
+    logger.info(f"🔸 TINYMAN NOTE: {txn['sender'][:8]}... | {note[:50]}...")
+    logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
 
-        config = {
-            'filters': self.create_pool_filters(),
-            'sync_behaviour': 'skip-sync-newest',  # Start from current tip
-            'wait_for_block_when_at_tip': True,    # Low latency monitoring
-            'frequency_in_seconds': 2,             # Poll every 2 seconds when catching up
-            'max_rounds_to_sync': 100,             # Process max 100 rounds at once
-            'watermark_persistence': {
-                'get': lambda: self.watermark,
-                'set': lambda w: setattr(self, 'watermark', w)
-            }
-        }
+def handle_pact_note(txn: SubscribedTransaction, _: str) -> None:
+    note = txn.get('note', b'')
+    if isinstance(note, bytes):
+        note = note.decode('utf-8', errors='replace')
+    logger.info(f"🔸 PACT NOTE: {txn['sender'][:8]}... | {note[:50]}...")
+    logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
 
-        # Add indexer for fast catchup if available
-        if self.indexer:
-            config['sync_behaviour'] = 'catchup-with-indexer'
+def handle_tinyman_app(txn: SubscribedTransaction, _: str) -> None:
+    app_id = txn.get('application-transaction', {}).get('application-id', 0)
+    on_complete = txn.get('application-transaction', {}).get('on-completion', 'noop')
+    args = txn.get('application-transaction', {}).get('application-args', [])
 
-        return AlgorandSubscriber(config, self.algod, self.indexer)
+    logger.info(f"🔷 TINYMAN APP CALL: {txn['sender'][:8]}...")
+    logger.info(f"   App: {app_id} | Action: {on_complete} | Args: {len(args)}")
+    logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
 
-    def handle_swap_transaction(self, transaction):
-        """Handle detected swap transactions"""
-        tx_type = transaction.get('tx-type')
+    # Check for inner transactions (common in DEX operations)
+    inner_txns = txn.get('inner-txns', [])
+    if inner_txns:
+        logger.info(f"   📎 {len(inner_txns)} inner transactions")
 
-        if tx_type == 'axfer':
-            asset_id = transaction.get('asset-transfer-transaction', {}).get('asset-id', 0)
-            amount = transaction.get('asset-transfer-transaction', {}).get('amount', 0)
-            sender = transaction.get('sender', '')
-            receiver = transaction.get('asset-transfer-transaction', {}).get('receiver', '')
+def handle_pact_app(txn: SubscribedTransaction, _: str) -> None:
+    app_id = txn.get('application-transaction', {}).get('application-id', 0) 
+    logger.info(f"🔷 PACT APP CALL: {txn['sender'][:8]}... | App: {app_id}")
+    logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
 
-            asset_name = self.get_asset_name(asset_id)
-            amount_display = self.format_amount(amount, asset_id)
+def handle_asset_transfer(txn: SubscribedTransaction, _: str) -> None:
+    asset_transfer = txn.get('asset-transfer-transaction', {})
+    asset_id = asset_transfer.get('asset-id', 0)
+    amount = asset_transfer.get('amount', 0)
+    receiver = asset_transfer.get('receiver', '')
 
-            logger.info(f"🔄 SWAP: {sender[:8]}... → {receiver[:8]}...")
-            logger.info(f"   Asset: {asset_name} ({asset_id})")
-            logger.info(f"   Amount: {amount_display}")
-            logger.info(f"   Tx ID: {transaction['id']}")
+    # Map common assets
+    asset_names = {
+        31566704: 'USDC',
+        312769: 'USDT', 
+        386192725: 'goBTC',
+        386195940: 'goETH'
+    }
+    asset_name = asset_names.get(asset_id, f'ASA-{asset_id}')
 
-        elif tx_type == 'pay':
-            amount = transaction.get('payment-transaction', {}).get('amount', 0)
-            sender = transaction.get('sender', '')
-            receiver = transaction.get('payment-transaction', {}).get('receiver', '')
+    logger.info(f"🪙 ASSET TRANSFER: {txn['sender'][:8]}... → {receiver[:8]}...")
+    logger.info(f"   Asset: {asset_name} | Amount: {amount}")
+    logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
 
-            algo_amount = amount / 1_000_000  # Convert microAlgos to Algos
+def handle_algo_transfer(txn: SubscribedTransaction, _: str) -> None:
+    payment = txn.get('payment-transaction', {})
+    amount = payment.get('amount', 0) 
+    receiver = payment.get('receiver', '')
+    algo_amount = amount / 1_000_000
 
-            logger.info(f"💰 ALGO SWAP: {sender[:8]}... → {receiver[:8]}...")
-            logger.info(f"   Amount: {algo_amount:.6f} ALGO")
-            logger.info(f"   Tx ID: {transaction['id']}")
+    logger.info(f"💰 ALGO TRANSFER: {txn['sender'][:8]}... → {receiver[:8]}...")
+    logger.info(f"   Amount: {algo_amount:.6f} ALGO")
+    logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
 
-    def handle_dex_interaction(self, transaction):
-        """Handle DEX smart contract interactions"""
-        app_id = transaction.get('application-transaction', {}).get('application-id', 0)
-        sender = transaction.get('sender', '')
+def handle_noted_transaction(txn: SubscribedTransaction, _: str) -> None:
+    # Get the note and safely decode it
+    note_bytes = txn.get('note', b'')
+    if not note_bytes:
+        return
+        
+    # Try to decode the note safely
+    try:
+        note = note_bytes.decode('utf-8', errors='replace')
+        tx_type = txn.get('tx-type', 'unknown')
+        
+        # Check for Tinyman notes
+        if 'tinyman' in note.lower():
+            logger.info(f"🔸 TINYMAN NOTE: {txn['sender'][:8]}... | {note[:50]}...")
+            logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
+            return
+            
+        # Check for Pact notes
+        if 'pact' in note.lower():
+            logger.info(f"🔸 PACT NOTE: {txn['sender'][:8]}... | {note[:50]}...")
+            logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
+            return
+            
+        # Log other transactions with notes
+        if len(note.strip()) > 0:
+            logger.info(f"📝 TRANSACTION WITH NOTE ({tx_type.upper()}): {txn['sender'][:8]}...")
+            logger.info(f"   Note: {note[:100]}...")
+            logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
+    except Exception as e:
+        # Just silently skip transactions with notes we can't decode
+        pass
 
-        dex_name = 'Unknown'
-        for name, id in self.dex_app_ids.items():
-            if id == app_id:
-                dex_name = name.upper()
-                break
+# Register all handlers
+subscriber.on("tinyman_app_calls", handle_tinyman_app)
+subscriber.on("pact_app_calls", handle_pact_app)
+subscriber.on("major_asset_transfers", handle_asset_transfer)
+subscriber.on("algo_transfers", handle_algo_transfer)
+subscriber.on("all_transactions", handle_noted_transaction)
 
-        logger.info(f"🏪 DEX INTERACTION: {dex_name}")
-        logger.info(f"   User: {sender[:8]}...")
-        logger.info(f"   App ID: {app_id}")
-        logger.info(f"   Tx ID: {transaction['id']}")
+# Add general statistics tracking
+transaction_count = 0
+def track_stats(txn: SubscribedTransaction, _: str) -> None:
+    global transaction_count
+    transaction_count += 1
+    if transaction_count % 20 == 0:
+        logger.info(f"📊 Processed {transaction_count} relevant transactions")
 
-        # Extract additional details from app call
-        app_args = transaction.get('application-transaction', {}).get('application-args', [])
-        if app_args:
-            logger.info(f"   Method: {app_args[0] if app_args else 'Unknown'}")
-
-    def handle_pool_operation(self, transaction):
-        """Handle pool-specific operations identified by note prefix"""
-        note = transaction.get('note', b'').decode('utf-8', errors='ignore')
-        sender = transaction.get('sender', '')
-
-        logger.info(f"🏊 POOL OPERATION")
-        logger.info(f"   User: {sender[:8]}...")
-        logger.info(f"   Note: {note[:50]}...")
-        logger.info(f"   Tx ID: {transaction['id']}")
-
-    def get_asset_name(self, asset_id):
-        """Get human-readable asset name"""
-        for name, id in self.major_assets.items():
-            if id == asset_id:
-                return name
-        return f"ASA-{asset_id}"
-
-    def format_amount(self, amount, asset_id):
-        """Format amount based on asset decimals"""
-        if asset_id == 31566704:  # USDC
-            return f"{amount / 1_000_000:.6f}"
-        elif asset_id == 312769:  # USDT
-            return f"{amount / 1_000_000:.6f}"
-        else:
-            return str(amount)
-
-    def start_monitoring(self):
-        """Start the pool monitoring process"""
-        logger.info("🚀 Starting Algorand Pool Transaction Monitor...")
-        logger.info(f"Monitoring DEXs: {list(self.dex_app_ids.keys())}")
-        logger.info(f"Watching assets: {list(self.major_assets.keys())}")
-
-        subscriber = self.setup_subscriber()
-
-        # Register event handlers
-        subscriber.on('swap_in', self.handle_swap_transaction)
-        subscriber.on('algo_swap', self.handle_swap_transaction)
-
-        for dex_name in self.dex_app_ids.keys():
-            subscriber.on(f'{dex_name}_interaction', self.handle_dex_interaction)
-
-        subscriber.on('tinyman_operation', self.handle_pool_operation)
-        subscriber.on('pact_operation', self.handle_pool_operation)
-        subscriber.on('pool_token_transfer', self.handle_swap_transaction)
-
-        # Start monitoring
-        try:
-            subscriber.start()
-        except KeyboardInterrupt:
-            logger.info("⏹️  Monitoring stopped by user")
-        except Exception as e:
-            logger.error(f"❌ Error during monitoring: {e}")
-
-# Example usage
-def main():
-    """Main function to start pool monitoring"""
-
-    # Configure Algorand clients
-    # For MainNet monitoring
-    algod_token = "your-algod-token-here"  # From AlgoNode, PureStake, etc.
-    algod_server = "https://mainnet-api.algonode.cloud"
-    indexer_server = "https://mainnet-idx.algonode.cloud"
-
-    # Create clients
-    algod_client = algod.AlgodClient(algod_token, algod_server)
-    indexer_client = indexer.IndexerClient("", indexer_server)
-
-    # Create and start monitor
-    monitor = AlgorandPoolMonitor(algod_client, indexer_client)
-    monitor.start_monitoring()
+# Register stats tracking for one of the filters
+subscriber.on("all_transactions", track_stats)
 
 if __name__ == "__main__":
-    main()
+    logger.info("🚀 Starting Enhanced DEX Monitor...")
+    logger.info("📡 Monitoring Tinyman & Pact via multiple strategies:")
+    logger.info("   • Application call filtering") 
+    logger.info("   • Asset transfer filtering")
+    logger.info("   • Large ALGO transfer filtering")
+    logger.info("   • Transaction note inspection")
+
+    try:
+        # Test connection first
+        status = algorand.status()
+        logger.info(f"✅ Connected to MainNet | Current round: {status['last-round']}")
+
+        # Start the subscriber
+        subscriber.start()
+
+    except KeyboardInterrupt:
+        logger.info("⏹️ Monitoring stopped by user")
+    except Exception as e:
+        logger.error(f"❌ Error: {e}")
+        raise
