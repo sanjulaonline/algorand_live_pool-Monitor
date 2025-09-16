@@ -24,9 +24,7 @@ FILTERS = [
         "filter": {
             "type": "appl", 
             "app_id": [
-                # Note: Pact uses multiple app IDs for different pools
-                # You'll need to research current Pact app IDs
-                # These are examples - check Pact documentation
+                
             ]
         }
     },
