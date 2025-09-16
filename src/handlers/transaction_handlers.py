@@ -13,7 +13,7 @@ def handle_tinyman_app(txn: SubscribedTransaction, _: str) -> None:
     on_complete = txn.get('application-transaction', {}).get('on-completion', 'noop')
     args = txn.get('application-transaction', {}).get('application-args', [])
 
-    logger.info(f"🔷 TINYMAN APP CALL: {txn['sender'][:8]}...")
+    logger.info(f" TINYMAN APP CALL: {txn['sender'][:8]}...")
     logger.info(f"   App: {app_id} | Action: {on_complete} | Args: {len(args)}")
     logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
 
@@ -25,7 +25,7 @@ def handle_tinyman_app(txn: SubscribedTransaction, _: str) -> None:
 def handle_pact_app(txn: SubscribedTransaction, _: str) -> None:
     """Handle Pact application calls"""
     app_id = txn.get('application-transaction', {}).get('application-id', 0) 
-    logger.info(f"🔷 PACT APP CALL: {txn['sender'][:8]}... | App: {app_id}")
+    logger.info(f" PACT APP CALL: {txn['sender'][:8]}... | App: {app_id}")
     logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
 
 def handle_asset_transfer(txn: SubscribedTransaction, _: str) -> None:
@@ -55,7 +55,7 @@ def handle_algo_transfer(txn: SubscribedTransaction, _: str) -> None:
     receiver = payment.get('receiver', '')
     algo_amount = amount / 1_000_000
 
-    logger.info(f"💰 ALGO TRANSFER: {txn['sender'][:8]}... → {receiver[:8]}...")
+    logger.info(f" ALGO TRANSFER: {txn['sender'][:8]}... → {receiver[:8]}...")
     logger.info(f"   Amount: {algo_amount:.6f} ALGO")
     logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
 
@@ -73,13 +73,13 @@ def handle_noted_transaction(txn: SubscribedTransaction, _: str) -> None:
         
         # Check for Tinyman notes
         if 'tinyman' in note.lower():
-            logger.info(f"🔸 TINYMAN NOTE: {txn['sender'][:8]}... | {note[:50]}...")
+            logger.info(f" TINYMAN NOTE: {txn['sender'][:8]}... | {note[:50]}...")
             logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
             return
             
         # Check for Pact notes
         if 'pact' in note.lower():
-            logger.info(f"🔸 PACT NOTE: {txn['sender'][:8]}... | {note[:50]}...")
+            logger.info(f" PACT NOTE: {txn['sender'][:8]}... | {note[:50]}...")
             logger.info(f"   TX: {txn['id']} | Round: {txn['confirmed-round']}")
             return
             
