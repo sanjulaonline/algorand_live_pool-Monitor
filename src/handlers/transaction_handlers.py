@@ -20,7 +20,7 @@ def handle_tinyman_app(txn: SubscribedTransaction, _: str) -> None:
     # Check for inner transactions (common in DEX operations)
     inner_txns = txn.get('inner-txns', [])
     if inner_txns:
-        logger.info(f"   📎 {len(inner_txns)} inner transactions")
+        logger.info(f"    {len(inner_txns)} inner transactions")
 
 def handle_pact_app(txn: SubscribedTransaction, _: str) -> None:
     """Handle Pact application calls"""
