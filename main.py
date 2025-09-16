@@ -36,67 +36,55 @@ class AlgorandPoolMonitor:
         }
 
     def create_pool_filters(self):
-        """Create comprehensive filters for pool transactions"""
-        filters = []
-
-        # 1. Filter for asset transfers (swaps)
-        filters.extend([
+        """Create filters for pool transactions"""
+        filters = [
+            # Swap-in of ASA (asset transfer)
             {
-                'event_name': 'swap_in',
+                'name': 'swap_in',
                 'filter': {
                     'type': 'axfer',
-                    'min_amount': 1000,  # Minimum swap amount (micro units)
+                    'min_amount': 1000,
                     'asset_id': list(self.major_assets.values())
                 }
             },
+            # ALGO-for-ASA swap (payment)
             {
-                'event_name': 'algo_swap',
+                'name': 'algo_swap',
                 'filter': {
                     'type': 'pay',
-                    'min_amount': 1000000,  # Minimum 1 ALGO
-                }
-            }
-        ])
-
-        # 2. Filter for application calls to DEX contracts
-        filters.extend([
-            {
-                'event_name': f'{dex_name}_interaction',
-                'filter': {
-                    'type': 'appl',
-                    'app_id': app_id,
-                    'app_on_complete': ['noop', 'optin']
-                }
-            }
-            for dex_name, app_id in self.dex_app_ids.items()
-        ])
-
-        # 3. Filter for liquidity operations using note prefix
-        filters.extend([
-            {
-                'event_name': 'tinyman_operation',
-                'filter': {
-                    'note_prefix': 'tinyman'
+                    'min_amount': 1_000_000    # 1 ALGO
                 }
             },
+            # DEX application calls
+            *[
+                {
+                    'name': f'{dex}_interaction',
+                    'filter': {
+                        'type': 'appl',
+                        'app_id': app_id,
+                        'app_on_complete': ['noop', 'optin']
+                    }
+                }
+                for dex, app_id in self.dex_app_ids.items()
+            ],
+            # Note-based pool operations
             {
-                'event_name': 'pact_operation', 
+                'name': 'tinyman_operation',
+                'filter': { 'note_prefix': 'tinyman' }
+            },
+            {
+                'name': 'pact_operation',
+                'filter': { 'note_prefix': 'pact' }
+            },
+            # Pool-token transfers
+            {
+                'name': 'pool_token_transfer',
                 'filter': {
-                    'note_prefix': 'pact'
+                    'type': 'axfer',
+                    'min_amount': 1
                 }
             }
-        ])
-
-        # 4. Filter for pool token operations
-        filters.append({
-            'event_name': 'pool_token_transfer',
-            'filter': {
-                'type': 'axfer',
-                'min_amount': 1,
-                # Pool tokens typically have lower IDs and specific patterns
-            }
-        })
-
+        ]
         return filters
 
     def setup_subscriber(self):
